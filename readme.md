@@ -18,3 +18,6 @@ Este repositorio contiene el Back-end del TT titulado Prototipo de una red distr
 - [Flask](https://flask.palletsprojects.com/en/2.2.x/) (Framework web escrito en Python)
 - [Gunicorn](https://gunicorn.org/) (Servidor HTTP WSGI escrito en Python para UNIX)
 - [MongoDB](https://www.mongodb.com/) (Gestor de base de datos no relacional)
+
+## Interfaz de usuario
+La interfaz de usuario usada para este proyecto se encuentra [aqui](https://github.com/MaxCazares/TT-Front-end)
