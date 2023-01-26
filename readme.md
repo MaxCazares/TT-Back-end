@@ -6,7 +6,6 @@ Este repositorio contiene el Back-end del TT titulado Prototipo de una red distr
 1. Prender el Nodo1 en Azure
 2. Acceder a la máquina virtual haciendo uso del protocolo SSH
 3. Ejecutar los siguientes comandos en el orden especificado dentro de la terminal  
-    `sudo systemctl stop quickshop`  
     `sudo systemctl start mongod`  
     `cd quickshop`  
     `source quickshopenv/bin/activate`  

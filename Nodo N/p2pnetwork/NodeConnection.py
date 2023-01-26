@@ -34,6 +34,7 @@ class NodeConnection(threading.Thread):
         self.sock = sock
         self.terminate_flag = threading.Event()
 
+        self.waiter = 0
         # The id of the connected node
         self.id = str(id)  # Make sure the ID is a string
 
@@ -48,9 +49,9 @@ class NodeConnection(threading.Thread):
 
         # Use socket timeout to determine problems with the connection
         self.sock.settimeout(10.0)
-
+        self.current_message = {}
         self.main_node.debug_print(
-            f"NodeConnection.send: Started with client ({self.id}) '{self.host}:{self.port}'"
+            f"NodeConnection.send: Started with client {self.host}:{self.port}"
         )
 
     def compress(self, data, compression):
@@ -80,10 +81,9 @@ class NodeConnection(threading.Thread):
         except Exception as e:
             self.main_node.debug_print("compress: exception: " + str(e))
 
+        self.main_node.debug_print(":compress:b64encode:" + str(compressed))
         self.main_node.debug_print(
-            self.id + ":compress:b64encode:" + str(compressed))
-        self.main_node.debug_print(
-            self.id + ":compress:compression:" + str(int(10000*len(compressed)/len(data))/100) + "%")
+            ":compress:compression:" + str(int(10000*len(compressed)/len(data))/100) + "%")
 
         return compressed
 
@@ -108,8 +108,7 @@ class NodeConnection(threading.Thread):
         except Exception as e:
             print("Exception: " + str(e))
 
-        self.main_node.debug_print(
-            self.id + ":decompress:result: " + str(compressed))
+        self.main_node.debug_print(":decompress:result: " + str(compressed))
 
         return compressed
 
@@ -140,8 +139,9 @@ class NodeConnection(threading.Thread):
         elif isinstance(data, dict):
             try:
                 if compression == 'none':
-                    print("--------------------")
-                    print(json.dumps(data))
+                    self.main_node.debug_print(
+                        f"---------------------------- sending message to {self.host}:")
+                    self.main_node.debug_print(json.dumps(data))
                     self.sock.sendall(json.dumps(data).encode(
                         encoding_type) + self.EOT_CHAR)
                 else:
@@ -210,13 +210,14 @@ class NodeConnection(threading.Thread):
         buffer = b''  # Hold the stream that comes in!
 
         while not self.terminate_flag.is_set():
+
             chunk = b''
 
             try:
                 chunk = self.sock.recv(4096)
 
             except socket.timeout:
-                print("NodeConnection: timeout")
+                self.main_node.debug_print("\r")
 
             except Exception as e:
                 self.terminate_flag.set()  # Exception occurred terminating the connection
@@ -231,6 +232,10 @@ class NodeConnection(threading.Thread):
                 while eot_pos > 0:
                     packet = buffer[:eot_pos]
                     buffer = buffer[eot_pos + 1:]
+                    aux = self.parse_packet(packet)
+                    if isinstance(aux, dict) and 'result':
+                        if 'result' in aux.keys():
+                            self.current_message = aux
 
                     self.main_node.message_count_recv += 1
                     self.main_node.node_message(

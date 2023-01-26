@@ -1,4 +1,3 @@
-
 """
 Python package p2pnet for implementing decentralized peer-to-peer network applications
 """
@@ -42,7 +41,7 @@ class Node(threading.Thread):
         self.port = port
 
         # Events are send back to the given callback
-        self.callback = callback
+        self.callback = None
 
         # Nodes that have established a connection with this node
         self.nodes_inbound = []  # Nodes that are connect with us N->(US)
@@ -85,17 +84,29 @@ class Node(threading.Thread):
         self.max_connections = max_connections
 
         # Debugging on or off!
-        self.debug = False
+        self.debug = True
 
     @property
     def all_nodes(self) -> List[NodeConnection]:
         """Return a list of all the nodes, inbound and outbound, that are connected with this node."""
-        return self.nodes_inbound + self.nodes_outbound
+        lst = []
+        ids = []
+
+        for i in self.nodes_inbound:
+            if not i.id in ids:
+                lst.append(i)
+                ids.append(i.id)
+        for i in self.nodes_outbound:
+            if not i.id in ids:
+                lst.append(i)
+                ids.append(i.id)
+
+        return lst
 
     def debug_print(self, message: str) -> None:
         """When the debug flag is set to True, all debug messages are printed in the console."""
         if self.debug:
-            print(f"DEBUG ({self.id}): {message}")
+            print(f"DEBUG: {message}")
 
     def get_id(self):
         return self.id
@@ -113,7 +124,7 @@ class Node(threading.Thread):
             f"Initialisation of the Node on port: {self.port} on node ({self.id})")
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind((self.host, self.port))
-        self.sock.settimeout(10.0)
+        self.sock.settimeout(50.0)
         self.sock.listen(1)
 
     def print_connections(self) -> None:
@@ -157,7 +168,7 @@ class Node(threading.Thread):
         for node in self.all_nodes:
             if node.host == host and node.port == port:
                 print(
-                    f"connect_with_node: Already connected with this node ({node.id}).")
+                    f"connect_with_node: Already connected with this node ({node.host}:port {node.port}).")
                 return True
 
         node_ids = [node.id for node in self.all_nodes]
@@ -221,7 +232,7 @@ class Node(threading.Thread):
         for node in self.all_nodes:
             if node.host == host and node.port == port:
                 print(
-                    f"connect_with_node: Already connected with this node ({node.id}).")
+                    f"connect_with_node: Already connected with this node ({node.host}:port {node.port}).")
                 return node
 
         node_ids = [node.id for node in self.all_nodes]
@@ -271,9 +282,11 @@ class Node(threading.Thread):
         if node in self.nodes_outbound:
             self.node_disconnect_with_outbound_node(node)
             node.stop()
+            self.node_disconnected(node)
         if node in self.nodes_inbound:
             self.node_disconnect_with_inbound_node(node)
             node.stop()
+            self.node_disconnected(node)
 
         else:
             self.debug_print(
@@ -325,13 +338,6 @@ class Node(threading.Thread):
            and secondly we will send our node id to the connected node. When connected the method
            inbound_node_connected is invoked."""
 
-        self.connect_with_node("10.0.0.4", 2323)
-
-        for i in self.all_nodes:
-            if i.host == "192.168.1.79":
-                self.super_par = i
-                break
-
         while not self.terminate_flag.is_set():  # Check whether the thread needs to be closed
             try:
                 self.debug_print("Node: Wait for incoming connection")
@@ -365,7 +371,7 @@ class Node(threading.Thread):
                     connection.close()
 
             except socket.timeout:
-                self.debug_print('Node: Connection timeout!')
+                print("\n\r")
 
             except Exception as e:
                 self.inbound_node_connection_error(e)
@@ -388,10 +394,40 @@ class Node(threading.Thread):
         self.sock.close()
         print("Node stopped")
 
+    def wait_for_message(self) -> Union[dict, str]:
+        end = 0
+        chunk = b''
+        while end == 0:
+            try:
+                chunk = self.sock.recv(4096)
+
+            except socket.timeout:
+                self.debug_print("NodeConnection: timeout")
+
+            except Exception as e:
+                self.terminate_flag.set()  # Exception occurred terminating the connection
+                print('Unexpected error')
+                print(e)
+
+            # BUG: possible buffer overflow when no EOT_CHAR is found => Fix by max buffer count or so?
+            if chunk != b'':
+                buffer += chunk
+                eot_pos = buffer.find(self.EOT_CHAR)
+
+                while eot_pos > 0:
+                    packet = buffer[:eot_pos]
+                    buffer = buffer[eot_pos + 1:]
+
+                    eot_pos = buffer.find(self.EOT_CHAR)
+                    end = 1
+
+        return self.parse_packet(packet)
+
     def outbound_node_connected(self, node: NodeConnection):
         """This method is invoked when a connection with a outbound node was successful. The node made
            the connection itself."""
-        self.debug_print(f"outbound_node_connected: {node.id}")
+        self.debug_print(
+            f"outbound_node_connected: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("outbound_node_connected", self, node, {})
 
@@ -404,7 +440,8 @@ class Node(threading.Thread):
 
     def inbound_node_connected(self, node: NodeConnection):
         """This method is invoked when a node successfully connected with us."""
-        self.debug_print(f"inbound_node_connected: {node.id}")
+        self.debug_print(
+            f"inbound_node_connected: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("inbound_node_connected", self, node, {})
 
@@ -419,7 +456,7 @@ class Node(threading.Thread):
         """While the same nodeconnection class is used, the class itself is not able to
            determine if it is a inbound or outbound connection. This function is making
            sure the correct method is used."""
-        self.debug_print(f"node_disconnected: {node.id}")
+        self.debug_print(f"node_disconnected: {node.host}:port {node.port}")
 
         if node in self.nodes_inbound:
             del self.nodes_inbound[self.nodes_inbound.index(node)]
@@ -432,25 +469,28 @@ class Node(threading.Thread):
     def inbound_node_disconnected(self, node: NodeConnection):
         """This method is invoked when a node, that was previously connected with us, is in a disconnected
            state."""
-        self.debug_print(f"inbound_node_disconnected: {node.id}")
+        self.debug_print(
+            f"inbound_node_disconnected: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("inbound_node_disconnected", self, node, {})
 
     def outbound_node_disconnected(self, node: NodeConnection):
         """This method is invoked when a node, that we have connected to, is in a disconnected state."""
-        self.debug_print(f"outbound_node_disconnected: {node.id}")
+        self.debug_print(
+            f"outbound_node_disconnected: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("outbound_node_disconnected", self, node, {})
 
     def inbound_node_disconnected(self, node: NodeConnection):
         """This method is invoked when a node, that we have connected to, is in a disconnected state."""
-        self.debug_print(f"inbound_node_disconnected: {node.id}")
+        self.debug_print(
+            f"inbound_node_disconnected: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("inbound_node_disconnected", self, node, {})
 
     def node_message(self, node: NodeConnection, data):
         """This method is invoked when a node send us a message."""
-        self.debug_print(f"node_message: {node.id}: {data}")
+        self.debug_print(f"node_message: {node.host}:port {node.port}: {data}")
 
         if self.callback is not None:
             self.callback("node_message", self, node, data)
@@ -459,7 +499,7 @@ class Node(threading.Thread):
         """This method is invoked just before the connection is closed with the outbound node. From the node
            this request is created."""
         self.debug_print(
-            f"node wants to disconnect with other outbound node: {node.id}")
+            f"node wants to disconnect with other outbound node: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("node_disconnect_with_outbound_node", self, node, {})
 
@@ -467,7 +507,7 @@ class Node(threading.Thread):
         """This method is invoked just before the connection is closed with the outbound node. From the node
            this request is created."""
         self.debug_print(
-            f"node wants to disconnect with other inbound node: {node.id}")
+            f"node wants to disconnect with other inbound node: {node.host}:port {node.port}")
         if self.callback is not None:
             self.callback("node_disconnect_with_outbound_node", self, node, {})
 
